@@ -1,26 +1,85 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fff9f2;
+  --foreground: #201b2b;
+  --rocky-bg: #fff9f2;
+  --rocky-text: #201b2b;
+  --rocky-muted: #625a72;
+  --rocky-section-label: #9b5b33;
+  --rocky-card: rgba(255, 255, 255, 0.84);
+  --rocky-panel: rgba(255, 255, 255, 0.72);
+  --rocky-outline: rgba(74, 38, 10, 0.1);
+  --rocky-chip-text: #744723;
+  --rocky-selection: rgba(255, 135, 78, 0.25);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: "Avenir Next", "Avenir", "SF Pro Text", "Segoe UI", sans-serif;
+  --font-heading: "Avenir Next Rounded", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #11131d;
+    --foreground: #f5f2fb;
+    --rocky-bg: #11131d;
+    --rocky-text: #f5f2fb;
+    --rocky-muted: #b8b1c8;
+    --rocky-section-label: #f0c29b;
+    --rocky-card: rgba(255, 255, 255, 0.05);
+    --rocky-panel: rgba(255, 255, 255, 0.06);
+    --rocky-outline: rgba(255, 255, 255, 0.09);
+    --rocky-chip-text: #ffe6d2;
+    --rocky-selection: rgba(255, 176, 86, 0.22);
   }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Avenir Next", "Avenir", "SF Pro Text", "Segoe UI", sans-serif;
+  transition: background-color 0.45s ease, color 0.45s ease;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Avenir Next Rounded", "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+}
+
+a,
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--rocky-selection);
+}
+
+.rocky-float {
+  animation: rocky-float 6.5s ease-in-out infinite;
+}
+
+@keyframes rocky-float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
