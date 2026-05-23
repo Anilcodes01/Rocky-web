@@ -477,6 +477,7 @@ export async function POST(request: Request) {
     provider?: string;
     entity_id?: string;
     connected_account_id?: string;
+    session_id?: string;
     operation?: ProviderOperation;
   } | null = null;
 
@@ -489,6 +490,7 @@ export async function POST(request: Request) {
   const providerConfig = body?.provider ? getRockyProviderConfig(body.provider) : null;
   const entityId = body?.entity_id;
   const connectedAccountId = body?.connected_account_id;
+  const sessionId = typeof body?.session_id === "string" ? body.session_id.trim() : "";
   const operation = body?.operation;
 
   if (!providerConfig) {
@@ -518,16 +520,24 @@ export async function POST(request: Request) {
         const unreadOnly = operation.unread_only !== false;
         const rawQuery = cleanString(operation.query, "");
         const query = [unreadOnly ? "is:unread" : "", rawQuery].filter(Boolean).join(" ");
-
-        const result = await executeTool(
-          GMAIL_FETCH_EMAILS_TOOL,
-          entityId,
-          connectedAccountId,
-          {
-            max_results: maxResults,
-            ...(query ? { query } : {}),
-          }
-        );
+        const composio = getComposio();
+        const result = sessionId
+          ? await composio.tools.executeSessionTool(GMAIL_FETCH_EMAILS_TOOL, {
+              sessionId,
+              arguments: {
+                max_results: maxResults,
+                ...(query ? { query } : {}),
+              },
+            })
+          : await executeTool(
+              GMAIL_FETCH_EMAILS_TOOL,
+              entityId,
+              connectedAccountId,
+              {
+                max_results: maxResults,
+                ...(query ? { query } : {}),
+              }
+            );
 
         const messages = normalizeGmailMessages(result, maxResults);
 
