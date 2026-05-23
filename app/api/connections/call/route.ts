@@ -4,8 +4,31 @@ import { getComposio, hasComposioConfig } from "../../../../lib/composio";
 import { getRockyProviderConfig } from "../../../../lib/rocky-connections";
 
 const GMAIL_FETCH_EMAILS_TOOL = "GMAIL_FETCH_EMAILS";
+const GOOGLESHEETS_CREATE_SPREADSHEET_TOOL = "GOOGLESHEETS_CREATE_GOOGLE_SHEET1";
+const GOOGLEDRIVE_FIND_FILE_TOOL = "GOOGLEDRIVE_FIND_FILE";
+const NOTION_SEARCH_PAGES_TOOL = "NOTION_SEARCH_NOTION_PAGE";
+const GITHUB_LIST_REPOS_TOOL = "GITHUB_GET_REPOS";
+const LINEAR_LIST_ISSUES_TOOL = "LINEAR_LIST_LINEAR_ISSUES";
+const LINEAR_SEARCH_ISSUES_TOOL = "LINEAR_SEARCH_ISSUES";
+const SLACK_LIST_CHANNELS_TOOL = "SLACK_LIST_CHANNELS";
+const SLACK_SEND_MESSAGE_TOOL = "SLACK_SEND_MESSAGE";
+
 const GMAIL_SUMMARY_LIMIT = 10;
+const DEFAULT_COLLECTION_LIMIT = 8;
 const MAX_RESPONSE_BYTES = 256000;
+
+type ProviderOperation =
+  | {
+      type?: string;
+      max_results?: number;
+      unread_only?: boolean;
+      query?: string;
+      title?: string;
+      channel?: string;
+      text?: string;
+    }
+  | null
+  | undefined;
 
 function cappedJson(payload: unknown, status = 200) {
   const json = JSON.stringify(payload);
@@ -30,6 +53,10 @@ function cleanString(value: unknown, fallback = "") {
 
   const trimmed = value.trim();
   return trimmed || fallback;
+}
+
+function cleanBoolean(value: unknown, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function normalizeTimestamp(value: unknown) {
@@ -63,34 +90,7 @@ function normalizeTimestamp(value: unknown) {
   return "Unknown time";
 }
 
-function dedupeMessageCandidates(candidates: Record<string, unknown>[]) {
-  const seen = new Set<string>();
-  const unique: Record<string, unknown>[] = [];
-
-  for (const candidate of candidates) {
-    const id = cleanString(
-      candidate.id || candidate.messageId || candidate.message_id || candidate.gmailMessageId,
-      ""
-    );
-    const subject = cleanString(candidate.subject || candidate.title || candidate.snippet, "");
-    const sender = cleanString(
-      candidate.sender || candidate.from || candidate.from_email || candidate.sender_email,
-      ""
-    );
-    const key = [id, subject, sender].filter(Boolean).join("::");
-
-    if (!key || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    unique.push(candidate);
-  }
-
-  return unique;
-}
-
-function collectMessageCandidates(
+function collectRecords(
   value: unknown,
   candidates: Record<string, unknown>[] = [],
   seen = new WeakSet<object>()
@@ -106,34 +106,57 @@ function collectMessageCandidates(
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      collectMessageCandidates(item, candidates, seen);
+      collectRecords(item, candidates, seen);
     }
     return candidates;
   }
 
   const record = value as Record<string, unknown>;
-  const looksLikeMessage =
-    "subject" in record ||
-    "snippet" in record ||
-    "from" in record ||
-    "sender" in record ||
-    "messageId" in record ||
-    "message_id" in record ||
-    "id" in record;
-
-  if (looksLikeMessage) {
-    candidates.push(record);
-  }
+  candidates.push(record);
 
   for (const nested of Object.values(record)) {
-    collectMessageCandidates(nested, candidates, seen);
+    collectRecords(nested, candidates, seen);
   }
 
   return candidates;
 }
 
+function dedupeRecords(records: Record<string, unknown>[], keyBuilder: (record: Record<string, unknown>) => string) {
+  const seen = new Set<string>();
+  const unique: Record<string, unknown>[] = [];
+
+  for (const record of records) {
+    const key = keyBuilder(record);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(record);
+  }
+
+  return unique;
+}
+
 function normalizeGmailMessages(result: unknown, fallbackLimit: number) {
-  const rawCandidates = dedupeMessageCandidates(collectMessageCandidates(result));
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id || record.messageId || record.message_id || record.gmailMessageId, ""),
+      cleanString(record.subject || record.title || record.snippet, ""),
+      cleanString(record.sender || record.from || record.from_email || record.sender_email, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter(
+    (record) =>
+      "subject" in record ||
+      "snippet" in record ||
+      "from" in record ||
+      "sender" in record ||
+      "messageId" in record ||
+      "message_id" in record ||
+      "id" in record
+  );
 
   return rawCandidates.slice(0, fallbackLimit).map((message, index) => ({
     id: cleanString(
@@ -170,6 +193,184 @@ function normalizeGmailMessages(result: unknown, fallbackLimit: number) {
   }));
 }
 
+function normalizeGoogleDriveFiles(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id || record.fileId, ""),
+      cleanString(record.name || record.title, ""),
+      cleanString(record.url || record.webViewLink || record.link, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter(
+    (record) =>
+      "mimeType" in record ||
+      "webViewLink" in record ||
+      "owners" in record ||
+      "driveId" in record ||
+      "fileExtension" in record
+  );
+
+  return rawCandidates.slice(0, fallbackLimit).map((file, index) => ({
+    id: cleanString(file.id || file.fileId, `drive_file_${index + 1}`),
+    name: cleanString(file.name || file.title, "Untitled file"),
+    mime_type: cleanString(file.mimeType || file.type, "Unknown type"),
+    url: cleanString(file.webViewLink || file.url || file.link, ""),
+  }));
+}
+
+function normalizeNotionPages(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id || record.page_id, ""),
+      cleanString(record.url || record.public_url, ""),
+      cleanString(record.title || record.name, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter(
+    (record) =>
+      "properties" in record ||
+      "archived" in record ||
+      "created_time" in record ||
+      "last_edited_time" in record ||
+      "public_url" in record
+  );
+
+  return rawCandidates.slice(0, fallbackLimit).map((page, index) => ({
+    id: cleanString(page.id || page.page_id, `notion_page_${index + 1}`),
+    title: cleanString(
+      page.title ||
+        page.name ||
+        (Array.isArray(page.results) ? undefined : undefined),
+      "Untitled page"
+    ),
+    url: cleanString(page.url || page.public_url, ""),
+  }));
+}
+
+function normalizeGitHubRepositories(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id || record.node_id, ""),
+      cleanString(record.full_name || record.name, ""),
+      cleanString(record.html_url || record.url, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter(
+    (record) =>
+      "full_name" in record ||
+      "default_branch" in record ||
+      "fork" in record ||
+      "private" in record ||
+      "html_url" in record
+  );
+
+  return rawCandidates.slice(0, fallbackLimit).map((repo, index) => ({
+    id: cleanString(repo.id || repo.node_id, `repo_${index + 1}`),
+    name: cleanString(repo.name, "Unknown repo"),
+    full_name: cleanString(repo.full_name || repo.name, "Unknown repo"),
+    url: cleanString(repo.html_url || repo.url, ""),
+    description: cleanString(repo.description, ""),
+    private: cleanBoolean(repo.private, false),
+  }));
+}
+
+function normalizeLinearIssues(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id || record.identifier, ""),
+      cleanString(record.title || record.name, ""),
+      cleanString(record.url, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter(
+    (record) =>
+      "identifier" in record ||
+      "priority" in record ||
+      "branchName" in record ||
+      "estimate" in record ||
+      "state" in record
+  );
+
+  return rawCandidates.slice(0, fallbackLimit).map((issue, index) => ({
+    id: cleanString(issue.id || issue.identifier, `issue_${index + 1}`),
+    identifier: cleanString(issue.identifier, ""),
+    title: cleanString(issue.title || issue.name, "Untitled issue"),
+    state: cleanString(
+      (issue.state as Record<string, unknown> | undefined)?.name || issue.stateName || issue.status,
+      "Unknown state"
+    ),
+    url: cleanString(issue.url, ""),
+  }));
+}
+
+function normalizeSlackChannels(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id, ""),
+      cleanString(record.name, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter(
+    (record) =>
+      "is_channel" in record ||
+      "is_private" in record ||
+      "is_group" in record ||
+      "num_members" in record
+  );
+
+  return rawCandidates.slice(0, fallbackLimit).map((channel, index) => ({
+    id: cleanString(channel.id, `channel_${index + 1}`),
+    name: cleanString(channel.name, "unknown-channel"),
+    is_private: cleanBoolean(channel.is_private || channel.is_group, false),
+  }));
+}
+
+function extractGoogleSheet(result: unknown, titleFallback: string) {
+  const records = collectRecords(result);
+  const firstRecord = records.find(
+    (record) => "spreadsheetId" in record || "spreadsheetUrl" in record || "spreadsheet_id" in record
+  );
+
+  return {
+    spreadsheet_id: cleanString(
+      firstRecord?.spreadsheetId || firstRecord?.spreadsheet_id,
+      "new_spreadsheet"
+    ),
+    title: cleanString(firstRecord?.title || firstRecord?.name, titleFallback),
+    url: cleanString(firstRecord?.spreadsheetUrl || firstRecord?.url, ""),
+  };
+}
+
+function extractSlackMessage(result: unknown, channelFallback: string) {
+  const records = collectRecords(result);
+  const firstRecord = records.find(
+    (record) =>
+      "ts" in record ||
+      "message" in record ||
+      "channel" in record ||
+      "permalink" in record
+  );
+
+  const messageRecord =
+    (firstRecord?.message as Record<string, unknown> | undefined) || firstRecord || {};
+
+  return {
+    channel: cleanString(
+      (firstRecord?.channel as Record<string, unknown> | undefined)?.name ||
+        firstRecord?.channel ||
+        channelFallback,
+      channelFallback
+    ),
+    timestamp: cleanString(firstRecord?.ts || messageRecord.ts, ""),
+    permalink: cleanString(firstRecord?.permalink || messageRecord.permalink, ""),
+  };
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -184,17 +385,32 @@ function serializeError(error: unknown) {
   };
 }
 
+function normalizeLimit(value: unknown, fallback = DEFAULT_COLLECTION_LIMIT, max = DEFAULT_COLLECTION_LIMIT) {
+  return Math.max(1, Math.min(Number(value) || fallback, max));
+}
+
+async function executeTool(
+  toolSlug: string,
+  entityId: string,
+  connectedAccountId: string | undefined,
+  args: Record<string, unknown>
+) {
+  const composio = getComposio();
+
+  return composio.tools.execute(toolSlug, {
+    userId: entityId,
+    ...(connectedAccountId ? { connectedAccountId } : {}),
+    arguments: args,
+    dangerouslySkipVersionCheck: true,
+  });
+}
+
 export async function POST(request: Request) {
   let body: {
     provider?: string;
     entity_id?: string;
     connected_account_id?: string;
-    operation?: {
-      type?: string;
-      max_results?: number;
-      unread_only?: boolean;
-      query?: string;
-    };
+    operation?: ProviderOperation;
   } | null = null;
 
   try {
@@ -224,46 +440,254 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "broker_not_configured" }, { status: 503 });
   }
 
-  if (operation.type !== "gmail_summary") {
-    return NextResponse.json({ ok: false, error: "unsupported_operation" }, { status: 400 });
-  }
-
-  if (providerConfig.id !== "gmail") {
-    return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
-  }
-
   try {
-    const composio = getComposio();
-    const maxResults = Math.max(
-      1,
-      Math.min(Number(operation.max_results) || GMAIL_SUMMARY_LIMIT, GMAIL_SUMMARY_LIMIT)
-    );
-    const unreadOnly = operation.unread_only !== false;
-    const rawQuery = typeof operation.query === "string" ? operation.query.trim() : "";
-    const query = [unreadOnly ? "is:unread" : "", rawQuery].filter(Boolean).join(" ");
+    switch (operation.type) {
+      case "gmail_summary": {
+        if (providerConfig.id !== "gmail") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
 
-    const result = await composio.tools.execute(GMAIL_FETCH_EMAILS_TOOL, {
-      userId: entityId,
-      ...(connectedAccountId ? { connectedAccountId } : {}),
-      arguments: {
-        max_results: maxResults,
-        ...(query ? { query } : {}),
-      },
-      dangerouslySkipVersionCheck: true,
-    });
+        const maxResults = normalizeLimit(operation.max_results, GMAIL_SUMMARY_LIMIT, GMAIL_SUMMARY_LIMIT);
+        const unreadOnly = operation.unread_only !== false;
+        const rawQuery = cleanString(operation.query, "");
+        const query = [unreadOnly ? "is:unread" : "", rawQuery].filter(Boolean).join(" ");
 
-    const messages = normalizeGmailMessages(result, maxResults);
+        const result = await executeTool(
+          GMAIL_FETCH_EMAILS_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            max_results: maxResults,
+            ...(query ? { query } : {}),
+          }
+        );
 
-    return cappedJson({
-      ok: true,
-      provider: providerConfig.id,
-      connected_account_id: connectedAccountId || null,
-      message_count: messages.length,
-      messages,
-      source: "composio",
-    });
+        const messages = normalizeGmailMessages(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          message_count: messages.length,
+          messages,
+          source: "composio",
+        });
+      }
+
+      case "google_sheets_create_spreadsheet": {
+        if (providerConfig.id !== "google_sheets") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const title = cleanString(operation.title, "");
+        if (!title) {
+          return NextResponse.json({ ok: false, error: "missing_title" }, { status: 400 });
+        }
+
+        const result = await executeTool(
+          GOOGLESHEETS_CREATE_SPREADSHEET_TOOL,
+          entityId,
+          connectedAccountId,
+          { title }
+        );
+        const spreadsheet = extractGoogleSheet(result, title);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          spreadsheet,
+          source: "composio",
+        });
+      }
+
+      case "google_drive_search_files": {
+        if (providerConfig.id !== "google_drive") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const query = cleanString(operation.query, "");
+        if (!query) {
+          return NextResponse.json({ ok: false, error: "missing_query" }, { status: 400 });
+        }
+        const maxResults = normalizeLimit(operation.max_results);
+
+        const result = await executeTool(
+          GOOGLEDRIVE_FIND_FILE_TOOL,
+          entityId,
+          connectedAccountId,
+          { query }
+        );
+        const files = normalizeGoogleDriveFiles(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          file_count: files.length,
+          files,
+          source: "composio",
+        });
+      }
+
+      case "notion_search_pages": {
+        if (providerConfig.id !== "notion") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const query = cleanString(operation.query, "");
+        if (!query) {
+          return NextResponse.json({ ok: false, error: "missing_query" }, { status: 400 });
+        }
+        const maxResults = normalizeLimit(operation.max_results);
+
+        const result = await executeTool(
+          NOTION_SEARCH_PAGES_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            query,
+            page_size: maxResults,
+          }
+        );
+        const pages = normalizeNotionPages(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          page_count: pages.length,
+          pages,
+          source: "composio",
+        });
+      }
+
+      case "github_list_repositories": {
+        if (providerConfig.id !== "github") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const maxResults = normalizeLimit(operation.max_results);
+        const result = await executeTool(
+          GITHUB_LIST_REPOS_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            per_page: maxResults,
+            page: 1,
+          }
+        );
+        const repositories = normalizeGitHubRepositories(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          repository_count: repositories.length,
+          repositories,
+          source: "composio",
+        });
+      }
+
+      case "linear_search_issues": {
+        if (providerConfig.id !== "linear") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const query = cleanString(operation.query, "");
+        const maxResults = normalizeLimit(operation.max_results);
+
+        const result = await executeTool(
+          query ? LINEAR_SEARCH_ISSUES_TOOL : LINEAR_LIST_ISSUES_TOOL,
+          entityId,
+          connectedAccountId,
+          query
+            ? {
+                query,
+                limit: maxResults,
+              }
+            : {
+                limit: maxResults,
+              }
+        );
+        const issues = normalizeLinearIssues(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          issue_count: issues.length,
+          issues,
+          source: "composio",
+        });
+      }
+
+      case "slack_list_channels": {
+        if (providerConfig.id !== "slack") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const maxResults = normalizeLimit(operation.max_results);
+        const result = await executeTool(
+          SLACK_LIST_CHANNELS_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            limit: maxResults,
+          }
+        );
+        const channels = normalizeSlackChannels(result, maxResults);
+        const query = cleanString(operation.query, "").toLowerCase();
+        const filteredChannels = query
+          ? channels.filter((channel) => channel.name.toLowerCase().includes(query))
+          : channels;
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          channel_count: filteredChannels.length,
+          channels: filteredChannels,
+          source: "composio",
+        });
+      }
+
+      case "slack_send_message": {
+        if (providerConfig.id !== "slack") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const channel = cleanString(operation.channel, "");
+        const text = cleanString(operation.text, "");
+        if (!channel || !text) {
+          return NextResponse.json({ ok: false, error: "missing_channel_or_text" }, { status: 400 });
+        }
+
+        const result = await executeTool(
+          SLACK_SEND_MESSAGE_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            channel,
+            text,
+          }
+        );
+        const message = extractSlackMessage(result, channel);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          message,
+          source: "composio",
+        });
+      }
+
+      default:
+        return NextResponse.json({ ok: false, error: "unsupported_operation" }, { status: 400 });
+    }
   } catch (error) {
-    console.error("Composio Gmail summary failed", {
+    console.error("Composio broker call failed", {
       provider: providerConfig.id,
       operationType: operation.type,
       ...serializeError(error),
