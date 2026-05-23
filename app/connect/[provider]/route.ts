@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getComposio, hasComposioConfig } from "../../../lib/composio";
+import { hasComposioConfig } from "../../../lib/composio";
+import { getOrCreateToolRouterSession } from "../../../lib/composio-session";
 import { getSafeNextPath } from "../../../lib/auth";
 import {
   errorPage,
@@ -56,6 +57,7 @@ export async function GET(
     return NextResponse.redirect(loginUrl);
   }
 
+  const toolRouterSession = await getOrCreateToolRouterSession(user.id);
   const rockyEntityId = `rocky_${crypto.randomUUID()}`;
   const redis = getRedis();
   const callbackUrl = new URL(getComposioCallbackUrl(request.url));
@@ -67,6 +69,7 @@ export async function GET(
       provider,
       redirect_uri: redirectUri,
       rocky_entity_id: rockyEntityId,
+      composio_tool_router_session_id: toolRouterSession.sessionId,
       user_id: user.id,
       created_at: new Date().toISOString(),
     },
@@ -74,13 +77,9 @@ export async function GET(
   );
 
   try {
-    const connectionRequest = await getComposio().connectedAccounts.link(
-      rockyEntityId,
-      providerConfig.authConfigId,
-      {
-        callbackUrl: callbackUrl.toString(),
-      }
-    );
+    const connectionRequest = await toolRouterSession.authorize(providerConfig.toolkit, {
+      callbackUrl: callbackUrl.toString(),
+    });
 
     if (!connectionRequest.redirectUrl) {
       throw new Error("Composio did not return a connect URL.");

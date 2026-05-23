@@ -33,6 +33,7 @@ export async function POST(request: Request) {
     provider: string;
     composio_entity_id: string;
     composio_connected_account_id?: string | null;
+    composio_tool_router_session_id?: string | null;
   }>(getConnectionCodeKey(code));
 
   if (!stored) {
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
       provider: stored.provider,
       composio_entity_id: stored.composio_entity_id,
       composio_connected_account_id: stored.composio_connected_account_id || null,
+      composio_tool_router_session_id: stored.composio_tool_router_session_id || null,
     },
   });
 }

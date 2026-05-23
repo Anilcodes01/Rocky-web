@@ -23,9 +23,10 @@ export async function GET(request: Request) {
     provider?: string;
     redirect_uri?: string;
     rocky_entity_id?: string;
+    composio_tool_router_session_id?: string;
   }>(getOAuthStateKey(state));
 
-  if (!savedState?.provider || !savedState?.redirect_uri || !savedState?.rocky_entity_id) {
+  if (!savedState?.provider || !savedState?.redirect_uri || !savedState?.rocky_entity_id || !savedState?.composio_tool_router_session_id) {
     return errorPage("Expired state", "Rocky could not finish this connection because the request expired.");
   }
 
@@ -38,6 +39,7 @@ export async function GET(request: Request) {
       provider: savedState.provider,
       composio_entity_id: savedState.rocky_entity_id,
       composio_connected_account_id: connectedAccountId || null,
+      composio_tool_router_session_id: savedState.composio_tool_router_session_id,
       created_at: new Date().toISOString(),
     },
     { ex: 600 }
