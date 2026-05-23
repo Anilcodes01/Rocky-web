@@ -5,11 +5,17 @@ import { getRockyProviderConfig } from "../../../../lib/rocky-connections";
 
 const GMAIL_FETCH_EMAILS_TOOL = "GMAIL_FETCH_EMAILS";
 const GOOGLESHEETS_CREATE_SPREADSHEET_TOOL = "GOOGLESHEETS_CREATE_GOOGLE_SHEET1";
+const GOOGLESHEETS_APPEND_VALUES_TOOL = "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND";
 const GOOGLEDRIVE_FIND_FILE_TOOL = "GOOGLEDRIVE_FIND_FILE";
 const NOTION_SEARCH_PAGES_TOOL = "NOTION_SEARCH_NOTION_PAGE";
+const NOTION_CREATE_PAGE_TOOL = "NOTION_CREATE_NOTION_PAGE";
+const NOTION_APPEND_TEXT_BLOCKS_TOOL = "NOTION_APPEND_TEXT_BLOCKS";
 const GITHUB_LIST_REPOS_TOOL = "GITHUB_GET_REPOS";
+const GITHUB_CREATE_ISSUE_TOOL = "GITHUB_CREATE_AN_ISSUE";
 const LINEAR_LIST_ISSUES_TOOL = "LINEAR_LIST_LINEAR_ISSUES";
 const LINEAR_SEARCH_ISSUES_TOOL = "LINEAR_SEARCH_ISSUES";
+const LINEAR_LIST_TEAMS_TOOL = "LINEAR_LIST_LINEAR_TEAMS";
+const LINEAR_CREATE_ISSUE_TOOL = "LINEAR_CREATE_LINEAR_ISSUE";
 const SLACK_LIST_CHANNELS_TOOL = "SLACK_LIST_CHANNELS";
 const SLACK_SEND_MESSAGE_TOOL = "SLACK_SEND_MESSAGE";
 
@@ -26,6 +32,18 @@ type ProviderOperation =
       title?: string;
       channel?: string;
       text?: string;
+      rows?: unknown[][];
+      headers?: string[];
+      range?: string;
+      parent_id?: string;
+      markdown?: string;
+      block_id?: string;
+      paragraphs?: string[];
+      owner?: string;
+      repo?: string;
+      body?: string;
+      team_id?: string;
+      priority?: number;
     }
   | null
   | undefined;
@@ -346,6 +364,55 @@ function extractGoogleSheet(result: unknown, titleFallback: string) {
   };
 }
 
+function extractNotionPage(result: unknown, titleFallback: string) {
+  const records = collectRecords(result);
+  const firstRecord = records.find((record) => "id" in record && ("url" in record || "public_url" in record));
+
+  return {
+    id: cleanString(firstRecord?.id, "notion_page"),
+    title: cleanString(firstRecord?.title || firstRecord?.name, titleFallback),
+    url: cleanString(firstRecord?.url || firstRecord?.public_url, ""),
+  };
+}
+
+function extractLinearTeams(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [cleanString(record.id, ""), cleanString(record.name, ""), cleanString(record.key, "")]
+      .filter(Boolean)
+      .join("::")
+  ).filter((record) => "key" in record && "name" in record);
+
+  return rawCandidates.slice(0, fallbackLimit).map((team, index) => ({
+    id: cleanString(team.id, `team_${index + 1}`),
+    key: cleanString(team.key, ""),
+    name: cleanString(team.name, "Unknown team"),
+  }));
+}
+
+function extractLinearIssue(result: unknown, titleFallback: string) {
+  const records = collectRecords(result);
+  const firstRecord = records.find((record) => "id" in record && ("title" in record || "identifier" in record));
+
+  return {
+    id: cleanString(firstRecord?.id, "linear_issue"),
+    identifier: cleanString(firstRecord?.identifier, ""),
+    title: cleanString(firstRecord?.title, titleFallback),
+    url: cleanString(firstRecord?.url, ""),
+  };
+}
+
+function extractGitHubIssue(result: unknown, titleFallback: string) {
+  const records = collectRecords(result);
+  const firstRecord = records.find((record) => "id" in record && ("html_url" in record || "url" in record));
+
+  return {
+    id: cleanString(firstRecord?.id, "github_issue"),
+    title: cleanString(firstRecord?.title, titleFallback),
+    number: Number(firstRecord?.number) || 0,
+    url: cleanString(firstRecord?.html_url || firstRecord?.url, ""),
+  };
+}
+
 function extractSlackMessage(result: unknown, channelFallback: string) {
   const records = collectRecords(result);
   const firstRecord = records.find(
@@ -501,6 +568,54 @@ export async function POST(request: Request) {
         });
       }
 
+      case "google_sheets_append_rows": {
+        if (providerConfig.id !== "google_sheets") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const spreadsheetId = cleanString(operation.query, "");
+        const explicitRange = cleanString(operation.range, "");
+        const rows = Array.isArray(operation.rows) ? operation.rows.filter(Array.isArray) : [];
+        const headers = Array.isArray(operation.headers) ? operation.headers.map((value) => cleanString(value, "")).filter(Boolean) : [];
+
+        if (!spreadsheetId) {
+          return NextResponse.json({ ok: false, error: "missing_spreadsheet_id" }, { status: 400 });
+        }
+
+        if (!rows.length) {
+          return NextResponse.json({ ok: false, error: "missing_rows" }, { status: 400 });
+        }
+
+        const values = [...(headers.length ? [headers] : []), ...rows];
+        const range = explicitRange || "Sheet1!A:Z";
+
+        const result = await executeTool(
+          GOOGLESHEETS_APPEND_VALUES_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            spreadsheetId,
+            range,
+            values,
+            valueInputOption: "USER_ENTERED",
+            majorDimension: "ROWS",
+            insertDataOption: "INSERT_ROWS",
+            includeValuesInResponse: false,
+          }
+        );
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          appended_row_count: rows.length,
+          included_headers: headers.length > 0,
+          range,
+          raw_result: result,
+          source: "composio",
+        });
+      }
+
       case "google_drive_search_files": {
         if (providerConfig.id !== "google_drive") {
           return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
@@ -562,6 +677,89 @@ export async function POST(request: Request) {
         });
       }
 
+      case "notion_create_page": {
+        if (providerConfig.id !== "notion") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const title = cleanString(operation.title, "");
+        const parentId = cleanString(operation.parent_id, "");
+        const markdown = cleanString(operation.markdown, "");
+
+        if (!title || !parentId) {
+          return NextResponse.json({ ok: false, error: "missing_title_or_parent_id" }, { status: 400 });
+        }
+
+        const result = await executeTool(
+          NOTION_CREATE_PAGE_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            title,
+            parent_id: parentId,
+            ...(markdown ? { markdown } : {}),
+          }
+        );
+        const page = extractNotionPage(result, title);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          page,
+          source: "composio",
+        });
+      }
+
+      case "notion_append_paragraphs": {
+        if (providerConfig.id !== "notion") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const blockId = cleanString(operation.block_id, "");
+        const paragraphs = Array.isArray(operation.paragraphs)
+          ? operation.paragraphs.map((value) => cleanString(value, "")).filter(Boolean)
+          : [];
+
+        if (!blockId || !paragraphs.length) {
+          return NextResponse.json({ ok: false, error: "missing_block_id_or_paragraphs" }, { status: 400 });
+        }
+
+        const children = paragraphs.map((text) => ({
+          type: "paragraph",
+          object: "block",
+          paragraph: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: text,
+                },
+              },
+            ],
+          },
+        }));
+
+        const result = await executeTool(
+          NOTION_APPEND_TEXT_BLOCKS_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            block_id: blockId,
+            children,
+          }
+        );
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          appended_paragraph_count: paragraphs.length,
+          raw_result: result,
+          source: "composio",
+        });
+      }
+
       case "github_list_repositories": {
         if (providerConfig.id !== "github") {
           return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
@@ -618,6 +816,104 @@ export async function POST(request: Request) {
           connected_account_id: connectedAccountId || null,
           issue_count: issues.length,
           issues,
+          source: "composio",
+        });
+      }
+
+      case "linear_list_teams": {
+        if (providerConfig.id !== "linear") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const maxResults = normalizeLimit(operation.max_results);
+        const result = await executeTool(
+          LINEAR_LIST_TEAMS_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            first: maxResults,
+          }
+        );
+        const teams = extractLinearTeams(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          team_count: teams.length,
+          teams,
+          source: "composio",
+        });
+      }
+
+      case "linear_create_issue": {
+        if (providerConfig.id !== "linear") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const title = cleanString(operation.title, "");
+        const teamId = cleanString(operation.team_id, "");
+        const description = cleanString(operation.body, "");
+        const priority = Number(operation.priority) || 0;
+
+        if (!title || !teamId) {
+          return NextResponse.json({ ok: false, error: "missing_title_or_team_id" }, { status: 400 });
+        }
+
+        const result = await executeTool(
+          LINEAR_CREATE_ISSUE_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            title,
+            team_id: teamId,
+            ...(description ? { description } : {}),
+            ...(priority > 0 ? { priority } : {}),
+          }
+        );
+        const issue = extractLinearIssue(result, title);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          issue,
+          source: "composio",
+        });
+      }
+
+      case "github_create_issue": {
+        if (providerConfig.id !== "github") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const owner = cleanString(operation.owner, "");
+        const repo = cleanString(operation.repo, "");
+        const title = cleanString(operation.title, "");
+        const bodyText = cleanString(operation.body, "");
+
+        if (!owner || !repo || !title) {
+          return NextResponse.json({ ok: false, error: "missing_owner_repo_or_title" }, { status: 400 });
+        }
+
+        const result = await executeTool(
+          GITHUB_CREATE_ISSUE_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            owner,
+            repo,
+            title,
+            ...(bodyText ? { body: bodyText } : {}),
+          }
+        );
+        const issue = extractGitHubIssue(result, title);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          issue,
           source: "composio",
         });
       }
