@@ -1,5 +1,6 @@
 'use client'
 
+import { AuthDock } from "../components/auth-dock";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Image from "next/image";
@@ -215,6 +216,7 @@ export default function Home() {
       style={themeStyle}
       className="relative h-screen overflow-hidden bg-[var(--rocky-bg)] text-[var(--rocky-text)] transition-[background-color,color] duration-500"
     >
+      <AuthDock />
       <div
         className="pointer-events-none absolute inset-x-0 top-0 h-[42rem]"
         style={{ backgroundImage: "var(--theme-orb)" }}
