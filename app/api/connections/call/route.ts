@@ -507,7 +507,8 @@ async function executeTool(
   const composio = getComposio();
 
   return composio.tools.execute(toolSlug, {
-    ...(connectedAccountId ? { connectedAccountId } : { userId: entityId }),
+    userId: entityId,
+    ...(connectedAccountId ? { connectedAccountId } : {}),
     arguments: args,
     dangerouslySkipVersionCheck: true,
   });
