@@ -58,7 +58,6 @@ export async function GET(
   }
 
   const toolRouterSession = await getOrCreateToolRouterSession(user.id);
-  const rockyEntityId = `rocky_${crypto.randomUUID()}`;
   const redis = getRedis();
   const callbackUrl = new URL(getComposioCallbackUrl(request.url));
   callbackUrl.searchParams.set("state", validatedState);
@@ -68,7 +67,7 @@ export async function GET(
     {
       provider,
       redirect_uri: redirectUri,
-      rocky_entity_id: rockyEntityId,
+      composio_user_id: user.id,
       composio_tool_router_session_id: toolRouterSession.sessionId,
       user_id: user.id,
       created_at: new Date().toISOString(),

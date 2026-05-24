@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { getComposio, hasComposioConfig } from "../../../../lib/composio";
+import {
+  markProviderConnectionFailed,
+  markProviderConnectionUsed,
+  resolveProviderConnection,
+} from "../../../../lib/provider-connections";
 import { getRockyProviderConfig } from "../../../../lib/rocky-connections";
 
 const GMAIL_FETCH_EMAILS_TOOL = "GMAIL_FETCH_EMAILS";
@@ -552,7 +557,7 @@ export async function POST(request: Request) {
 
   const providerConfig = body?.provider ? getRockyProviderConfig(body.provider) : null;
   const entityId = body?.entity_id;
-  const connectedAccountId = body?.connected_account_id;
+  let connectedAccountId = body?.connected_account_id;
   const sessionId = typeof body?.session_id === "string" ? body.session_id.trim() : "";
   const operation = body?.operation;
 
@@ -570,6 +575,30 @@ export async function POST(request: Request) {
 
   if (!hasComposioConfig() || !providerConfig.authConfigId) {
     return NextResponse.json({ ok: false, error: "broker_not_configured" }, { status: 503 });
+  }
+
+  const resolvedConnection = await resolveProviderConnection({
+    provider: providerConfig.id,
+    entityId,
+    connectedAccountId,
+  });
+  const executionUserId = resolvedConnection?.composio_user_id || entityId;
+
+  if (resolvedConnection?.connected_account_id) {
+    connectedAccountId = resolvedConnection.connected_account_id;
+  }
+
+  if (connectedAccountId && entityId.startsWith("rocky_") && !resolvedConnection) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "connection_requires_reconnect",
+        provider: providerConfig.id,
+        operation_type: operation.type,
+        requires_reconnect: true,
+      },
+      { status: 409 }
+    );
   }
 
   try {
@@ -598,7 +627,7 @@ export async function POST(request: Request) {
         const query = [unreadOnly ? "is:unread" : "", rawQuery].filter(Boolean).join(" ");
         const result = await executeDurableTool(
           GMAIL_FETCH_EMAILS_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             max_results: maxResults,
@@ -608,6 +637,10 @@ export async function POST(request: Request) {
         );
 
         const messages = normalizeGmailMessages(result, maxResults);
+        await markProviderConnectionUsed({
+          provider: providerConfig.id,
+          connectedAccountId,
+        });
 
         return cappedJson({
           ok: true,
@@ -631,7 +664,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           GOOGLESHEETS_CREATE_SPREADSHEET_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           { title }
         );
@@ -669,7 +702,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           GOOGLESHEETS_APPEND_VALUES_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             spreadsheetId,
@@ -707,7 +740,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           GOOGLEDRIVE_FIND_FILE_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           { query }
         );
@@ -736,7 +769,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           NOTION_SEARCH_PAGES_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             query,
@@ -770,7 +803,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           NOTION_CREATE_PAGE_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             title,
@@ -820,7 +853,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           NOTION_APPEND_TEXT_BLOCKS_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             block_id: blockId,
@@ -846,7 +879,7 @@ export async function POST(request: Request) {
         const maxResults = normalizeLimit(operation.max_results);
         const result = await executeTool(
           GITHUB_LIST_REPOS_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             per_page: maxResults,
@@ -875,7 +908,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           query ? LINEAR_SEARCH_ISSUES_TOOL : LINEAR_LIST_ISSUES_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           query
             ? {
@@ -906,7 +939,7 @@ export async function POST(request: Request) {
         const maxResults = normalizeLimit(operation.max_results);
         const result = await executeTool(
           LINEAR_LIST_TEAMS_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             first: maxResults,
@@ -940,7 +973,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           LINEAR_CREATE_ISSUE_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             title,
@@ -976,7 +1009,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           GITHUB_CREATE_ISSUE_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             owner,
@@ -1004,7 +1037,7 @@ export async function POST(request: Request) {
         const maxResults = normalizeLimit(operation.max_results);
         const result = await executeTool(
           SLACK_LIST_CHANNELS_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             limit: maxResults,
@@ -1039,7 +1072,7 @@ export async function POST(request: Request) {
 
         const result = await executeTool(
           SLACK_SEND_MESSAGE_TOOL,
-          entityId,
+          executionUserId,
           connectedAccountId,
           {
             channel,
@@ -1061,6 +1094,13 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: false, error: "unsupported_operation" }, { status: 400 });
     }
   } catch (error) {
+    await markProviderConnectionFailed({
+      provider: providerConfig.id,
+      connectedAccountId,
+      failureCode: error instanceof Error ? error.name : "unknown_error",
+      failureMessage: error instanceof Error ? error.message : String(error),
+    });
+
     console.error("Composio broker call failed", {
       provider: providerConfig.id,
       operationType: operation.type,
@@ -1068,6 +1108,8 @@ export async function POST(request: Request) {
         hasConnectedAccountId: Boolean(connectedAccountId),
         hasSessionId: Boolean(sessionId),
         entityIdPrefix: typeof entityId === "string" ? entityId.slice(0, 12) : null,
+        executionUserIdPrefix: executionUserId.slice(0, 12),
+        resolvedFromConnectionStore: Boolean(resolvedConnection),
       },
       ...serializeError(error),
     });

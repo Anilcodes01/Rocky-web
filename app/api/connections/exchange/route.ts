@@ -34,6 +34,7 @@ export async function POST(request: Request) {
     composio_entity_id: string;
     composio_connected_account_id?: string | null;
     composio_tool_router_session_id?: string | null;
+    user_id?: string | null;
   }>(getConnectionCodeKey(code));
 
   if (!stored) {
