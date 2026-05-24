@@ -394,6 +394,34 @@ function extractLinearTeams(result: unknown, fallbackLimit: number) {
   }));
 }
 
+async function resolveLinearTeamId(input: {
+  explicitTeamId: string;
+  executionUserId: string;
+  connectedAccountId: string | undefined;
+}) {
+  if (input.explicitTeamId) {
+    return {
+      teamId: input.explicitTeamId,
+      defaulted: false,
+      team: null as { id: string; key: string; name: string } | null,
+    };
+  }
+
+  const result = await executeTool(
+    LINEAR_LIST_TEAMS_TOOL,
+    input.executionUserId,
+    input.connectedAccountId,
+    { first: 1 }
+  );
+  const [team] = extractLinearTeams(result, 1);
+
+  return {
+    teamId: team?.id ?? "",
+    defaulted: Boolean(team?.id),
+    team: team ?? null,
+  };
+}
+
 function extractLinearIssue(result: unknown, titleFallback: string) {
   const records = collectRecords(result);
   const firstRecord = records.find((record) => "id" in record && ("title" in record || "identifier" in record));
@@ -967,8 +995,18 @@ export async function POST(request: Request) {
         const description = cleanString(operation.body, "");
         const priority = Number(operation.priority) || 0;
 
-        if (!title || !teamId) {
-          return NextResponse.json({ ok: false, error: "missing_title_or_team_id" }, { status: 400 });
+        if (!title) {
+          return NextResponse.json({ ok: false, error: "missing_title" }, { status: 400 });
+        }
+
+        const resolvedTeam = await resolveLinearTeamId({
+          explicitTeamId: teamId,
+          executionUserId,
+          connectedAccountId,
+        });
+
+        if (!resolvedTeam.teamId) {
+          return NextResponse.json({ ok: false, error: "missing_linear_team" }, { status: 400 });
         }
 
         const result = await executeTool(
@@ -977,7 +1015,7 @@ export async function POST(request: Request) {
           connectedAccountId,
           {
             title,
-            team_id: teamId,
+            team_id: resolvedTeam.teamId,
             ...(description ? { description } : {}),
             ...(priority > 0 ? { priority } : {}),
           }
@@ -988,6 +1026,8 @@ export async function POST(request: Request) {
           ok: true,
           provider: providerConfig.id,
           connected_account_id: connectedAccountId || null,
+          defaulted_team: resolvedTeam.defaulted,
+          team: resolvedTeam.team,
           issue,
           source: "composio",
         });
