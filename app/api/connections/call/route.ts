@@ -438,17 +438,59 @@ function extractSlackMessage(result: unknown, channelFallback: string) {
   };
 }
 
+function serializeUnknown(value: unknown, depth = 0): unknown {
+  if (depth > 3) {
+    return "[Max depth reached]";
+  }
+
+  if (value instanceof Error) {
+    const errorRecord = value as Error & {
+      cause?: unknown;
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      meta?: unknown;
+      error?: unknown;
+      headers?: unknown;
+    };
+
+    return {
+      name: value.name,
+      message: value.message,
+      code: errorRecord.code,
+      status: errorRecord.status,
+      statusCode: errorRecord.statusCode,
+      meta: serializeUnknown(errorRecord.meta, depth + 1),
+      error: serializeUnknown(errorRecord.error, depth + 1),
+      cause: serializeUnknown(errorRecord.cause, depth + 1),
+      stack: process.env.NODE_ENV === "development" ? value.stack : undefined,
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((item) => serializeUnknown(item, depth + 1));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        serializeUnknown(item, depth + 1),
+      ])
+    );
+  }
+
+  return value;
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
-    };
+    return serializeUnknown(error);
   }
 
   return {
     message: typeof error === "string" ? error : "Unknown error",
+    raw: serializeUnknown(error),
   };
 }
 
@@ -534,6 +576,19 @@ export async function POST(request: Request) {
       case "gmail_summary": {
         if (providerConfig.id !== "gmail") {
           return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        if (!connectedAccountId) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "connection_requires_reconnect",
+              provider: providerConfig.id,
+              operation_type: operation.type,
+              requires_reconnect: true,
+            },
+            { status: 409 }
+          );
         }
 
         const maxResults = normalizeLimit(operation.max_results, GMAIL_SUMMARY_LIMIT, GMAIL_SUMMARY_LIMIT);
@@ -1008,6 +1063,11 @@ export async function POST(request: Request) {
     console.error("Composio broker call failed", {
       provider: providerConfig.id,
       operationType: operation.type,
+      executionContext: {
+        hasConnectedAccountId: Boolean(connectedAccountId),
+        hasSessionId: Boolean(sessionId),
+        entityIdPrefix: typeof entityId === "string" ? entityId.slice(0, 12) : null,
+      },
       ...serializeError(error),
     });
 
