@@ -472,6 +472,27 @@ async function executeTool(
   });
 }
 
+async function executeDurableTool(
+  toolSlug: string,
+  entityId: string,
+  connectedAccountId: string | undefined,
+  args: Record<string, unknown>,
+  sessionId?: string
+) {
+  if (connectedAccountId) {
+    return executeTool(toolSlug, entityId, connectedAccountId, args);
+  }
+
+  if (sessionId) {
+    return getComposio().tools.executeSessionTool(toolSlug, {
+      sessionId,
+      arguments: args,
+    });
+  }
+
+  return executeTool(toolSlug, entityId, connectedAccountId, args);
+}
+
 export async function POST(request: Request) {
   let body: {
     provider?: string;
@@ -520,24 +541,16 @@ export async function POST(request: Request) {
         const unreadOnly = operation.unread_only !== false;
         const rawQuery = cleanString(operation.query, "");
         const query = [unreadOnly ? "is:unread" : "", rawQuery].filter(Boolean).join(" ");
-        const composio = getComposio();
-        const result = sessionId
-          ? await composio.tools.executeSessionTool(GMAIL_FETCH_EMAILS_TOOL, {
-              sessionId,
-              arguments: {
-                max_results: maxResults,
-                ...(query ? { query } : {}),
-              },
-            })
-          : await executeTool(
-              GMAIL_FETCH_EMAILS_TOOL,
-              entityId,
-              connectedAccountId,
-              {
-                max_results: maxResults,
-                ...(query ? { query } : {}),
-              }
-            );
+        const result = await executeDurableTool(
+          GMAIL_FETCH_EMAILS_TOOL,
+          entityId,
+          connectedAccountId,
+          {
+            max_results: maxResults,
+            ...(query ? { query } : {}),
+          },
+          sessionId
+        );
 
         const messages = normalizeGmailMessages(result, maxResults);
 
