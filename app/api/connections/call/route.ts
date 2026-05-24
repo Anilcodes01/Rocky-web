@@ -483,9 +483,9 @@ function serializeUnknown(value: unknown, depth = 0): unknown {
   return value;
 }
 
-function serializeError(error: unknown) {
+function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
-    return serializeUnknown(error);
+    return serializeUnknown(error) as Record<string, unknown>;
   }
 
   return {
