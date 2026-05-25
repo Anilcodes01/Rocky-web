@@ -217,6 +217,17 @@ function normalizeGmailMessages(result: unknown, fallbackLimit: number) {
         message.text,
       ""
     ),
+    body: cleanString(
+      message.body ||
+        message.bodyText ||
+        message.body_text ||
+        message.textPlain ||
+        message.text_plain ||
+        message.text ||
+        message.htmlToText ||
+        message.messageText,
+      ""
+    ),
   }));
 }
 
