@@ -9,6 +9,7 @@ import {
 import { getRockyProviderConfig } from "../../../../lib/rocky-connections";
 
 const GMAIL_FETCH_EMAILS_TOOL = "GMAIL_FETCH_EMAILS";
+const GMAIL_SEND_EMAIL_TOOL = "GMAIL_SEND_EMAIL";
 const GOOGLESHEETS_CREATE_SPREADSHEET_TOOL = "GOOGLESHEETS_CREATE_GOOGLE_SHEET1";
 const GOOGLESHEETS_APPEND_VALUES_TOOL = "GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND";
 const GOOGLEDRIVE_FIND_FILE_TOOL = "GOOGLEDRIVE_FIND_FILE";
@@ -37,6 +38,9 @@ type ProviderOperation =
       title?: string;
       channel?: string;
       text?: string;
+      recipient?: string;
+      cc?: string[];
+      bcc?: string[];
       rows?: unknown[][];
       headers?: string[];
       range?: string;
@@ -676,6 +680,74 @@ export async function POST(request: Request) {
           connected_account_id: connectedAccountId || null,
           message_count: messages.length,
           messages,
+          source: "composio",
+        });
+      }
+
+      case "gmail_send_email": {
+        if (providerConfig.id !== "gmail") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        if (!connectedAccountId) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "connection_requires_reconnect",
+              provider: providerConfig.id,
+              operation_type: operation.type,
+              requires_reconnect: true,
+            },
+            { status: 409 }
+          );
+        }
+
+        const recipient = cleanString(operation.recipient, "");
+        const subject = cleanString(operation.title, "");
+        const body = cleanString(operation.text, "");
+        const cc = Array.isArray(operation.cc) ? operation.cc.map((value) => cleanString(value, "")).filter(Boolean) : [];
+        const bcc = Array.isArray(operation.bcc) ? operation.bcc.map((value) => cleanString(value, "")).filter(Boolean) : [];
+
+        if (!recipient) {
+          return NextResponse.json({ ok: false, error: "missing_recipient" }, { status: 400 });
+        }
+
+        if (!subject) {
+          return NextResponse.json({ ok: false, error: "missing_subject" }, { status: 400 });
+        }
+
+        if (!body) {
+          return NextResponse.json({ ok: false, error: "missing_body" }, { status: 400 });
+        }
+
+        const result = await executeDurableTool(
+          GMAIL_SEND_EMAIL_TOOL,
+          executionUserId,
+          connectedAccountId,
+          {
+            recipient_email: recipient,
+            subject,
+            body,
+            ...(cc.length ? { cc } : {}),
+            ...(bcc.length ? { bcc } : {}),
+          },
+          sessionId
+        );
+
+        await markProviderConnectionUsed({
+          provider: providerConfig.id,
+          connectedAccountId,
+        });
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          recipient,
+          subject,
+          cc,
+          bcc,
+          raw_result: result,
           source: "composio",
         });
       }
