@@ -8,6 +8,9 @@ create table if not exists public.rocky_scheduled_items (
   scheduled_for timestamptz not null,
   timezone text not null default 'UTC',
   repeat_rule text not null default 'none' check (repeat_rule in ('none', 'daily', 'weekdays', 'weekly', 'monthly')),
+  interval_minutes integer,
+  window_start_time text,
+  window_end_time text,
   notes text,
   status text not null default 'pending' check (status in ('pending', 'completed', 'dismissed', 'missed', 'cancelled')),
   snoozed_until timestamptz,
@@ -16,6 +19,11 @@ create table if not exists public.rocky_scheduled_items (
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.rocky_scheduled_items
+  add column if not exists interval_minutes integer,
+  add column if not exists window_start_time text,
+  add column if not exists window_end_time text;
 
 create index if not exists rocky_scheduled_items_device_id_idx
   on public.rocky_scheduled_items (device_id, scheduled_for);

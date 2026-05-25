@@ -11,6 +11,9 @@ type ScheduledItemRow = {
   scheduled_for: string;
   timezone: string;
   repeat_rule: string;
+  interval_minutes: number | null;
+  window_start_time: string | null;
+  window_end_time: string | null;
   notes: string | null;
   status: string;
   snoozed_until: string | null;
@@ -27,6 +30,9 @@ export type ScheduledItemInput = {
   scheduledFor: string;
   timezone: string;
   repeatRule: "none" | "daily" | "weekdays" | "weekly" | "monthly";
+  intervalMinutes?: number | null;
+  windowStartTime?: string | null;
+  windowEndTime?: string | null;
   notes?: string | null;
 };
 
@@ -36,6 +42,9 @@ export type ScheduledItemUpdateInput = {
   scheduledFor?: string;
   timezone?: string;
   repeatRule?: "none" | "daily" | "weekdays" | "weekly" | "monthly";
+  intervalMinutes?: number | null;
+  windowStartTime?: string | null;
+  windowEndTime?: string | null;
   notes?: string | null;
   status?: "pending" | "completed" | "dismissed" | "missed" | "cancelled";
   snoozedUntil?: string | null;
@@ -52,6 +61,9 @@ function baseSelect() {
     "scheduled_for",
     "timezone",
     "repeat_rule",
+    "interval_minutes",
+    "window_start_time",
+    "window_end_time",
     "notes",
     "status",
     "snoozed_until",
@@ -89,6 +101,9 @@ export async function createScheduledItem(input: ScheduledItemInput) {
       scheduled_for: input.scheduledFor,
       timezone: input.timezone,
       repeat_rule: input.repeatRule,
+      interval_minutes: input.intervalMinutes ?? null,
+      window_start_time: input.windowStartTime ?? null,
+      window_end_time: input.windowEndTime ?? null,
       notes: input.notes ?? null,
       status: "pending",
     })
@@ -126,6 +141,15 @@ export async function updateScheduledItem(
   }
   if (updates.repeatRule !== undefined) {
     payload.repeat_rule = updates.repeatRule;
+  }
+  if (updates.intervalMinutes !== undefined) {
+    payload.interval_minutes = updates.intervalMinutes;
+  }
+  if (updates.windowStartTime !== undefined) {
+    payload.window_start_time = updates.windowStartTime;
+  }
+  if (updates.windowEndTime !== undefined) {
+    payload.window_end_time = updates.windowEndTime;
   }
   if (updates.notes !== undefined) {
     payload.notes = updates.notes;

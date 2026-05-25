@@ -12,6 +12,9 @@ export type Database = {
           scheduled_for: string;
           timezone: string;
           repeat_rule: string;
+          interval_minutes: number | null;
+          window_start_time: string | null;
+          window_end_time: string | null;
           notes: string | null;
           status: string;
           snoozed_until: string | null;
@@ -28,6 +31,9 @@ export type Database = {
           scheduled_for: string;
           timezone?: string;
           repeat_rule?: string;
+          interval_minutes?: number | null;
+          window_start_time?: string | null;
+          window_end_time?: string | null;
           notes?: string | null;
           status?: string;
           snoozed_until?: string | null;
@@ -44,6 +50,9 @@ export type Database = {
           scheduled_for?: string;
           timezone?: string;
           repeat_rule?: string;
+          interval_minutes?: number | null;
+          window_start_time?: string | null;
+          window_end_time?: string | null;
           notes?: string | null;
           status?: string;
           snoozed_until?: string | null;

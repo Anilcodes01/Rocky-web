@@ -34,6 +34,36 @@ function normalizeTimestamp(value: unknown) {
   return new Date(parsed).toISOString();
 }
 
+function normalizePositiveInteger(value: unknown) {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 0 ? Math.floor(value) : null;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
+  }
+
+  return undefined;
+}
+
+function normalizeClockTime(value: unknown) {
+  if (value === null) {
+    return null;
+  }
+
+  const raw = cleanString(value);
+  if (!raw) {
+    return null;
+  }
+
+  return /^\d{2}:\d{2}$/.test(raw) ? raw : undefined;
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ itemId: string }> }
@@ -58,6 +88,9 @@ export async function PATCH(
   const scheduledFor = normalizeTimestamp(body?.scheduled_for);
   const timezone = cleanString(body?.timezone);
   const repeatRule = cleanString(body?.repeat_rule);
+  const intervalMinutes = body && "interval_minutes" in body ? normalizePositiveInteger(body.interval_minutes) : undefined;
+  const windowStartTime = body && "window_start_time" in body ? normalizeClockTime(body.window_start_time) : undefined;
+  const windowEndTime = body && "window_end_time" in body ? normalizeClockTime(body.window_end_time) : undefined;
   const notes = body && "notes" in body ? cleanString(body.notes) || null : undefined;
   const status = cleanString(body?.status);
   const snoozedUntil = body && "snoozed_until" in body ? normalizeTimestamp(body.snoozed_until) : undefined;
@@ -87,6 +120,15 @@ export async function PATCH(
       return NextResponse.json({ ok: false, error: "invalid_repeat_rule" }, { status: 400 });
     }
     updates.repeatRule = repeatRule;
+  }
+  if (intervalMinutes !== undefined) {
+    updates.intervalMinutes = intervalMinutes;
+  }
+  if (windowStartTime !== undefined) {
+    updates.windowStartTime = windowStartTime;
+  }
+  if (windowEndTime !== undefined) {
+    updates.windowEndTime = windowEndTime;
   }
   if (notes !== undefined) {
     updates.notes = notes;

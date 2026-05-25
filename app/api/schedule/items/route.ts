@@ -29,6 +29,28 @@ function normalizeScheduledFor(value: unknown) {
   return new Date(parsed).toISOString();
 }
 
+function normalizePositiveInteger(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 0 ? Math.floor(value) : null;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
+  }
+
+  return null;
+}
+
+function normalizeClockTime(value: unknown) {
+  const raw = cleanString(value);
+  if (!raw) {
+    return null;
+  }
+
+  return /^\d{2}:\d{2}$/.test(raw) ? raw : null;
+}
+
 export async function GET(request: Request) {
   const deviceId = normalizeDeviceId(request);
   if (!deviceId) {
@@ -64,7 +86,10 @@ export async function POST(request: Request) {
   const kind = cleanString(body?.kind);
   const scheduledFor = normalizeScheduledFor(body?.scheduled_for);
   const timezone = cleanString(body?.timezone) || "UTC";
-  const repeatRule = cleanString(body?.repeat_rule) || "none";
+  const intervalMinutes = normalizePositiveInteger(body?.interval_minutes);
+  const windowStartTime = normalizeClockTime(body?.window_start_time);
+  const windowEndTime = normalizeClockTime(body?.window_end_time);
+  const repeatRule = cleanString(body?.repeat_rule) || (intervalMinutes ? "daily" : "none");
   const notes = cleanString(body?.notes) || null;
 
   if (!title) {
@@ -83,6 +108,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_repeat_rule" }, { status: 400 });
   }
 
+  if ((windowStartTime && !windowEndTime) || (!windowStartTime && windowEndTime)) {
+    return NextResponse.json({ ok: false, error: "invalid_time_window" }, { status: 400 });
+  }
+
   try {
     const item = await createScheduledItem({
       deviceId,
@@ -91,6 +120,9 @@ export async function POST(request: Request) {
       scheduledFor,
       timezone,
       repeatRule: repeatRule as "none" | "daily" | "weekdays" | "weekly" | "monthly",
+      intervalMinutes,
+      windowStartTime,
+      windowEndTime,
       notes,
     });
 
