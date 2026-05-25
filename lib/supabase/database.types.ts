@@ -3,6 +3,57 @@ export type Json = boolean | number | string | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      rocky_scheduled_items: {
+        Row: {
+          id: string;
+          device_id: string;
+          title: string;
+          kind: string;
+          scheduled_for: string;
+          timezone: string;
+          repeat_rule: string;
+          notes: string | null;
+          status: string;
+          snoozed_until: string | null;
+          last_delivered_at: string | null;
+          delivered_count: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          device_id: string;
+          title: string;
+          kind: string;
+          scheduled_for: string;
+          timezone?: string;
+          repeat_rule?: string;
+          notes?: string | null;
+          status?: string;
+          snoozed_until?: string | null;
+          last_delivered_at?: string | null;
+          delivered_count?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          device_id?: string;
+          title?: string;
+          kind?: string;
+          scheduled_for?: string;
+          timezone?: string;
+          repeat_rule?: string;
+          notes?: string | null;
+          status?: string;
+          snoozed_until?: string | null;
+          last_delivered_at?: string | null;
+          delivered_count?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       user_provider_connections: {
         Row: {
           id: string;
