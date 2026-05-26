@@ -397,15 +397,24 @@ function extractNotionPage(result: unknown, titleFallback: string) {
 
 function extractLinearTeams(result: unknown, fallbackLimit: number) {
   const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
-    [cleanString(record.id, ""), cleanString(record.name, ""), cleanString(record.key, "")]
+    [
+      cleanString(record.id || record.teamId || record.team_id, ""),
+      cleanString(record.name || record.teamName || record.team_name, ""),
+      cleanString(record.key || record.teamKey || record.team_key, ""),
+    ]
       .filter(Boolean)
       .join("::")
-  ).filter((record) => "key" in record && "name" in record);
+  ).filter((record) => {
+    const id = cleanString(record.id || record.teamId || record.team_id, "");
+    const name = cleanString(record.name || record.teamName || record.team_name, "");
+    const key = cleanString(record.key || record.teamKey || record.team_key, "");
+    return Boolean((id || key) && name);
+  });
 
   return rawCandidates.slice(0, fallbackLimit).map((team, index) => ({
-    id: cleanString(team.id, `team_${index + 1}`),
-    key: cleanString(team.key, ""),
-    name: cleanString(team.name, "Unknown team"),
+    id: cleanString(team.id || team.teamId || team.team_id, `team_${index + 1}`),
+    key: cleanString(team.key || team.teamKey || team.team_key, ""),
+    name: cleanString(team.name || team.teamName || team.team_name, "Unknown team"),
   }));
 }
 
