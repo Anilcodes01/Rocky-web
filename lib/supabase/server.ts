@@ -8,6 +8,7 @@ import { getServerEnv } from "../env";
 import type { Database } from "./database.types";
 
 let supabaseServiceRoleClient: ReturnType<typeof createClient<Database>> | null = null;
+const tokenClientCache = new Map<string, ReturnType<typeof createClient<Database>>>();
 
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
@@ -56,4 +57,37 @@ export function createSupabaseServiceRoleClient() {
   }
 
   return supabaseServiceRoleClient;
+}
+
+export function createSupabaseTokenClient(accessToken: string) {
+  const env = getServerEnv();
+  const trimmedToken = accessToken.trim();
+
+  if (!trimmedToken) {
+    throw new Error("Access token is required.");
+  }
+
+  const cachedClient = tokenClientCache.get(trimmedToken);
+  if (cachedClient) {
+    return cachedClient;
+  }
+
+  const client = createClient<Database>(
+    env.NEXT_PUBLIC_SUPABASE_URL,
+    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${trimmedToken}`,
+        },
+      },
+    }
+  );
+
+  tokenClientCache.set(trimmedToken, client);
+  return client;
 }
