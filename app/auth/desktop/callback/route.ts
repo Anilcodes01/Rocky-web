@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 
 import { getSafeLoopbackRedirectURL } from "../../../../lib/auth";
-import { getServerEnv } from "../../../../lib/env";
-import type { Database } from "../../../../lib/supabase/database.types";
+import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
@@ -15,17 +13,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "invalid_desktop_callback" }, { status: 400 });
   }
 
-  const env = getServerEnv();
-  const supabase = createClient<Database>(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    }
-  );
+  const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error || !data.session) {
