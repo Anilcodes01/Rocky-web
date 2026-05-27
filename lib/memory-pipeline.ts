@@ -83,6 +83,17 @@ const toolingKeywords = [
   "python",
 ];
 
+const disallowedNameWords = new Set([
+  "working",
+  "building",
+  "using",
+  "trying",
+  "thinking",
+  "feeling",
+  "doing",
+  "going",
+]);
+
 function normalizeMemoryContent(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -170,22 +181,41 @@ function extractMemoryCandidates(messages: RockyMessageRow[]) {
       });
     }
 
-    const nameMatch = content.match(/^my name is\s+(.+)$/i);
-    if (nameMatch) {
-      const name = clampText(nameMatch[1], 120);
-      candidates.push({
-        type: "identity",
-        scope: "user",
-        content: `User's name is ${name}`,
-        normalizedContent: normalizeMemoryContent(`user name ${name}`),
-        confidence: 0.96,
-        sourceMessageId: message.id,
-      });
+    const explicitNameMatch = content.match(/\bmy name is\s+([a-z][a-z]+(?:\s+[a-z][a-z]+){0,2})(?=$|[,.!?]|\s+and\b)/i);
+    const implicitNameMatch = content.match(/\bi(?:'m| am)\s+([a-z][a-z]+(?:\s+[a-z][a-z]+){0,2})(?=$|[,.!?]|\s+and\b)/i);
+    const rawName = explicitNameMatch?.[1] ?? implicitNameMatch?.[1] ?? null;
+    if (rawName) {
+      const firstWord = rawName.split(/\s+/)[0]?.toLowerCase() ?? "";
+      if (!disallowedNameWords.has(firstWord)) {
+        const name = clampText(rawName, 120);
+        candidates.push({
+          type: "identity",
+          scope: "user",
+          content: `User's name is ${name}`,
+          normalizedContent: normalizeMemoryContent(`user name ${name}`),
+          confidence: explicitNameMatch ? 0.96 : 0.9,
+          sourceMessageId: message.id,
+        });
+      }
     }
 
-    const projectMatch = content.match(/^(?:i(?:'m| am) working on|this project is)\s+(.+)$/i);
-    if (projectMatch) {
+    const projectPatterns = [
+      /\bi(?:'m| am)\s+working on\s+(.+?)(?=$|[.!?])/i,
+      /\bi(?:'m| am)\s+building\s+(.+?)(?=$|[.!?])/i,
+      /\bthis project is\s+(.+?)(?=$|[.!?])/i,
+    ];
+
+    for (const pattern of projectPatterns) {
+      const projectMatch = content.match(pattern);
+      if (!projectMatch) {
+        continue;
+      }
+
       const projectDetail = clampText(projectMatch[1], 280);
+      if (!projectDetail) {
+        continue;
+      }
+
       candidates.push({
         type: "project",
         scope: "project",
@@ -194,6 +224,7 @@ function extractMemoryCandidates(messages: RockyMessageRow[]) {
         confidence: 0.78,
         sourceMessageId: message.id,
       });
+      break;
     }
 
     if (preferenceKeywords.some((keyword) => normalizeMemoryContent(content).includes(keyword)) && /don't|do not|never/i.test(content)) {

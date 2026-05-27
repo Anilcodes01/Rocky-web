@@ -36,7 +36,11 @@ export async function GET(
       summary: context.summary,
       recent_messages: context.recentMessages,
       relevant_memory_items: context.relevantMemoryItems,
-      prompt_context: context.promptContext,
+      prompt_context: {
+        summary_text: context.promptContext.summaryText,
+        recent_transcript: context.promptContext.recentTranscript,
+        memory_lines: context.promptContext.memoryLines,
+      },
     });
   } catch (error) {
     return buildErrorResponse(error, "conversation_context_failed");
