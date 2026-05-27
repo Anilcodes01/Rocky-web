@@ -21,7 +21,9 @@ const GITHUB_CREATE_ISSUE_TOOL = "GITHUB_CREATE_AN_ISSUE";
 const LINEAR_LIST_ISSUES_TOOL = "LINEAR_LIST_LINEAR_ISSUES";
 const LINEAR_SEARCH_ISSUES_TOOL = "LINEAR_SEARCH_ISSUES";
 const LINEAR_LIST_TEAMS_TOOL = "LINEAR_LIST_LINEAR_TEAMS";
+const LINEAR_LIST_STATES_TOOL = "LINEAR_LIST_LINEAR_STATES";
 const LINEAR_CREATE_ISSUE_TOOL = "LINEAR_CREATE_LINEAR_ISSUE";
+const LINEAR_UPDATE_ISSUE_TOOL = "LINEAR_UPDATE_ISSUE";
 const SLACK_LIST_CHANNELS_TOOL = "SLACK_LIST_CHANNELS";
 const SLACK_SEND_MESSAGE_TOOL = "SLACK_SEND_MESSAGE";
 
@@ -51,6 +53,8 @@ type ProviderOperation =
       owner?: string;
       repo?: string;
       body?: string;
+      issue_id?: string;
+      status?: string;
       team_id?: string;
       priority?: number;
     }
@@ -418,6 +422,28 @@ function extractLinearTeams(result: unknown, fallbackLimit: number) {
   }));
 }
 
+function extractLinearStates(result: unknown, fallbackLimit: number) {
+  const rawCandidates = dedupeRecords(collectRecords(result), (record) =>
+    [
+      cleanString(record.id || record.stateId || record.state_id, ""),
+      cleanString(record.name || record.stateName || record.state_name, ""),
+      cleanString(record.type || record.stateType || record.state_type, ""),
+    ]
+      .filter(Boolean)
+      .join("::")
+  ).filter((record) => {
+    const id = cleanString(record.id || record.stateId || record.state_id, "");
+    const name = cleanString(record.name || record.stateName || record.state_name, "");
+    return Boolean(id && name);
+  });
+
+  return rawCandidates.slice(0, fallbackLimit).map((state, index) => ({
+    id: cleanString(state.id || state.stateId || state.state_id, `state_${index + 1}`),
+    name: cleanString(state.name || state.stateName || state.state_name, "Unknown state"),
+    type: cleanString(state.type || state.stateType || state.state_type, ""),
+  }));
+}
+
 async function resolveLinearTeamId(input: {
   explicitTeamId: string;
   executionUserId: string;
@@ -443,6 +469,43 @@ async function resolveLinearTeamId(input: {
     teamId: team?.id ?? "",
     defaulted: Boolean(team?.id),
     team: team ?? null,
+  };
+}
+
+async function resolveLinearStateId(input: {
+  desiredStatus: string;
+  explicitTeamId: string;
+  executionUserId: string;
+  connectedAccountId: string | undefined;
+}) {
+  const resolvedTeam = await resolveLinearTeamId({
+    explicitTeamId: input.explicitTeamId,
+    executionUserId: input.executionUserId,
+    connectedAccountId: input.connectedAccountId,
+  });
+
+  if (!resolvedTeam.teamId) {
+    return {
+      teamId: "",
+      stateId: "",
+      state: null as { id: string; name: string; type: string } | null,
+    };
+  }
+
+  const result = await executeTool(
+    LINEAR_LIST_STATES_TOOL,
+    input.executionUserId,
+    input.connectedAccountId,
+    { team_id: resolvedTeam.teamId }
+  );
+  const states = extractLinearStates(result, 20);
+  const normalizedDesiredStatus = input.desiredStatus.trim().toLowerCase();
+  const matchedState = states.find((state) => state.name.trim().toLowerCase() === normalizedDesiredStatus);
+
+  return {
+    teamId: resolvedTeam.teamId,
+    stateId: matchedState?.id ?? "",
+    state: matchedState ?? null,
   };
 }
 
@@ -1077,6 +1140,45 @@ export async function POST(request: Request) {
         });
       }
 
+      case "linear_list_states": {
+        if (providerConfig.id !== "linear") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const maxResults = normalizeLimit(operation.max_results, 8, 12);
+        const explicitTeamId = cleanString(operation.team_id, "");
+        const resolvedTeam = await resolveLinearTeamId({
+          explicitTeamId,
+          executionUserId,
+          connectedAccountId,
+        });
+
+        if (!resolvedTeam.teamId) {
+          return NextResponse.json({ ok: false, error: "missing_linear_team" }, { status: 400 });
+        }
+
+        const result = await executeTool(
+          LINEAR_LIST_STATES_TOOL,
+          executionUserId,
+          connectedAccountId,
+          {
+            team_id: resolvedTeam.teamId,
+          }
+        );
+        const states = extractLinearStates(result, maxResults);
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          defaulted_team: resolvedTeam.defaulted,
+          team: resolvedTeam.team,
+          state_count: states.length,
+          states,
+          source: "composio",
+        });
+      }
+
       case "linear_create_issue": {
         if (providerConfig.id !== "linear") {
           return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
@@ -1121,6 +1223,70 @@ export async function POST(request: Request) {
           defaulted_team: resolvedTeam.defaulted,
           team: resolvedTeam.team,
           issue,
+          source: "composio",
+        });
+      }
+
+      case "linear_update_issue_status": {
+        if (providerConfig.id !== "linear") {
+          return NextResponse.json({ ok: false, error: "unsupported_provider_operation" }, { status: 400 });
+        }
+
+        const issueId = cleanString(operation.issue_id, "");
+        const status = cleanString(operation.status, "");
+        const explicitTeamId = cleanString(operation.team_id, "");
+
+        if (!issueId) {
+          return NextResponse.json({ ok: false, error: "missing_issue_id" }, { status: 400 });
+        }
+
+        if (!status) {
+          return NextResponse.json({ ok: false, error: "missing_status" }, { status: 400 });
+        }
+
+        const resolvedState = await resolveLinearStateId({
+          desiredStatus: status,
+          explicitTeamId,
+          executionUserId,
+          connectedAccountId,
+        });
+
+        if (!resolvedState.teamId) {
+          return NextResponse.json({ ok: false, error: "missing_linear_team" }, { status: 400 });
+        }
+
+        if (!resolvedState.stateId) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "missing_linear_state",
+              requested_status: status,
+            },
+            { status: 400 }
+          );
+        }
+
+        const result = await executeTool(
+          LINEAR_UPDATE_ISSUE_TOOL,
+          executionUserId,
+          connectedAccountId,
+          {
+            issue_id: issueId,
+            state_id: resolvedState.stateId,
+            team_id: resolvedState.teamId,
+          }
+        );
+        const issue = extractLinearIssue(result, "Linear issue");
+
+        return cappedJson({
+          ok: true,
+          provider: providerConfig.id,
+          connected_account_id: connectedAccountId || null,
+          state: resolvedState.state,
+          issue: {
+            ...issue,
+            state: resolvedState.state?.name || status,
+          },
           source: "composio",
         });
       }
