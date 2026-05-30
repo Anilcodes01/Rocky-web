@@ -21,6 +21,7 @@ const serverEnvSchema = z.object({
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1).optional(),
   KV_REST_API_URL: z.string().url().optional(),
   KV_REST_API_TOKEN: z.string().min(1).optional(),
+  SERPER_API_KEY: z.string().min(1).optional(),
 });
 
 let cachedEnv: z.infer<typeof serverEnvSchema> | null = null;
